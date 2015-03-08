@@ -290,9 +290,9 @@ int main(int argc, char* argv[]) {
 
       //Apply baseline cut
 
-      if( !(simNJet>4) ) continue;
-      if( !(simmet>200) ) continue;
-      if(!passdeltaPhi) continue;
+	if(simNJet<AnaConsts::nJetsSelPt30Eta24) continue;
+	if(simmet<AnaConsts::defaultMETcut) continue;
+	if(!passdeltaPhi) continue;
 	if(!passbJets) continue;
 
       //correction factor:
@@ -358,8 +358,7 @@ vector<TLorentzVector> combjet (const vector<TLorentzVector> &seljet, const vect
     }
   }
   if(idx<seljet.size()){
-      unsigned int j = idx;
-      for(unsigned int j=0; j<seljet.size(); j++){
+      for(unsigned int j=idx; j<seljet.size(); j++){
 	TLorentzVector comb;
 	comb.SetPtEtaPhiM(seljet.at(j).Pt(), seljet.at(j).Eta(), seljet.at(j).Phi(), seljet.at(j).M());
 	combNJet.push_back(comb);
