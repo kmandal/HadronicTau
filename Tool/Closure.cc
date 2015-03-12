@@ -36,21 +36,26 @@ using namespace std;
 void passBaselineFunc(NTupleReader &tr)
 {
   bool passBaseline = true;
-  bool passBaseline_nolepveto = true;
   //Form TLorentzVector of MET
   TLorentzVector metLVec; metLVec.SetPtEtaPhiM(tr.getVar<double>("met"), 0, tr.getVar<double>("metphi"), 0);
   //Calculate number of leptons
   int nMuons = AnaFunctions::countMuons(tr.getVec<TLorentzVector>("muonsLVec"), tr.getVec<double>("muonsRelIso"), tr.getVec<double>("muonsMtw"), AnaConsts::muonsArr);
   int nElectrons = AnaFunctions::countElectrons(tr.getVec<TLorentzVector>("elesLVec"), tr.getVec<double>("elesRelIso"), tr.getVec<double>("elesMtw"), AnaConsts::elesArr);
   //  int nIsoTrks = AnaFunctions::countIsoTrks(tr.getVec<TLorentzVector>("loose_isoTrksLVec"), tr.getVec<double>("loose_isoTrks_iso"), tr.getVec<double>("loose_isoTrks_mtw"), AnaConsts::isoTrksArr);
+
   //Calculate number of jets and b-tagged jets
   int cntCSVS = AnaFunctions::countCSVS(tr.getVec<TLorentzVector>("jetsLVec"), tr.getVec<double>("recoJetsBtag_0"), AnaConsts::cutCSVS, AnaConsts::bTagArr);
-  //  int cntNJetsPt50Eta24 = AnaFunctions::countJets(tr.getVec<TLorentzVector>("jetsLVec"), AnaConsts::pt50Eta24Arr);
+  //    int cntNJetsPt50Eta24 = AnaFunctions::countJets(tr.getVec<TLorentzVector>("jetsLVec"), AnaConsts::pt50Eta24Arr);
   int cntNJetsPt30Eta24 = AnaFunctions::countJets(tr.getVec<TLorentzVector>("jetsLVec"), AnaConsts::pt30Eta24Arr);
-  // int cntNJetsPt30 = AnaFunctions::countJets(tr.getVec<TLorentzVector>("jetsLVec"), AnaConsts::pt30Arr);
+  int cntNJetsPt30 = AnaFunctions::countJets(tr.getVec<TLorentzVector>("jetsLVec"), AnaConsts::pt30Arr);
+
   //Calculate deltaPhi
   std::vector<double> * dPhiVec = new std::vector<double>();
   (*dPhiVec) = AnaFunctions::calcDPhi(tr.getVec<TLorentzVector>("jetsLVec"), tr.getVar<double>("metphi"), 3, AnaConsts::dphiArr);
+
+  std::vector<TLorentzVector> *jetsLVec_forTagger = new std::vector<TLorentzVector>(); std::vector<double> *recoJetsBtag_forTagger = new std::vector<double>();
+  AnaFunctions::prepareJetsForTagger(tr.getVec<TLorentzVector>("jetsLVec"), tr.getVec<double>("recoJetsBtag_0"), (*jetsLVec_forTagger), (*recoJetsBtag_forTagger));
+
 
   //Pass lepton veto?
   bool passLeptVeto = true;
@@ -59,7 +64,7 @@ void passBaselineFunc(NTupleReader &tr)
 
   //Pass number of jets?
   bool passnJets = true;
-  //if( cntNJetsPt50Eta24 < AnaConsts::nJetsSelPt50Eta24 ){ passBaseline = false; passBaseline_nolepveto = false; passnJets = false;}
+  //if( cntNJetsPt50Eta24 < AnaConsts::nJetsSelPt50Eta24 ){ passBaseline = false; passnJets = false;}
   if( cntNJetsPt30Eta24 < AnaConsts::nJetsSelPt30Eta24 ){ passBaseline = false; passnJets = false;}
 
   //Pass deltaPhi?
@@ -74,6 +79,36 @@ void passBaselineFunc(NTupleReader &tr)
   bool passMET = true;
   if( tr.getVar<double>("met") < AnaConsts::defaultMETcut ){ passBaseline = false; passMET = false; }
 
+    //Calculate top tagger related variables.
+  //Note that to save speed, only do the calculation after previous base line requirements.
+  int bestTopJetIdx = -1;
+  bool remainPassCSVS = false;
+  int pickedRemainingCombfatJetIdx = -1;
+  double bestTopJetMass = -1;
+  int nTopCandSortedCnt = 0;
+  double MT2 = -1;
+  double mTcomb = -1;
+  if( passBaseline && cntNJetsPt30 >= AnaConsts::nJetsSel )
+    {
+      type3Ptr->processEvent((*jetsLVec_forTagger), (*recoJetsBtag_forTagger), metLVec);
+      bestTopJetIdx = type3Ptr->bestTopJetIdx;
+      remainPassCSVS = type3Ptr->remainPassCSVS;
+      pickedRemainingCombfatJetIdx = type3Ptr->pickedRemainingCombfatJetIdx;
+      if( bestTopJetIdx != -1 ) bestTopJetMass = type3Ptr->bestTopJetLVec.M();
+      nTopCandSortedCnt = type3Ptr->nTopCandSortedCnt;
+      MT2 = type3Ptr->MT2;
+      mTcomb = type3Ptr->mTbJet + 0.5*type3Ptr->mTbestTopJet;
+    }
+
+  //Pass top tagger requirement?
+  bool passTagger = true;
+  //bestTopJetIdx != -1 means at least 1 top candidate!
+  if( bestTopJetIdx == -1 ){ passBaseline = false; passTagger = false; }
+  if( ! remainPassCSVS ){ passBaseline = false; passTagger = false; }
+  if( pickedRemainingCombfatJetIdx == -1 && jetsLVec_forTagger->size()>=6 ){ passBaseline = false; passTagger = false; }
+  if( ! (bestTopJetMass > AnaConsts::lowTopCut_ && bestTopJetMass < AnaConsts::highTopCut_ ) ){ passBaseline = false; passTagger = false; }
+
+
   //register new var
 
   tr.registerDerivedVar("nMuons_CUT2", nMuons);
@@ -86,6 +121,9 @@ void passBaselineFunc(NTupleReader &tr)
   tr.registerDerivedVar("passnJets", passnJets);
   tr.registerDerivedVar("passdPhis", passdPhis);
   tr.registerDerivedVar("passBJets", passBJets);
+  tr.registerDerivedVar("passTagger", passTagger);
+
+
 }
 
 // === Main Function ===================================================
@@ -113,13 +151,13 @@ int main(int argc, char* argv[]) {
 
   TauResponse tauResp(respTempl);
 
+
   // --- Analyse events --------------------------------------------
   std::cout<<"First loop begin: "<<std::endl;
   // Loop over the events (tree entries)
   int k = 0;
   while(tr.getNextEvent()){
     k++;
-
     vector<TLorentzVector> muonsLVec = tr.getVec<TLorentzVector>("muonsLVec");
     vector<double> muonsRelIso = tr.getVec<double>("muonsRelIso");
     vector<TLorentzVector> jetsLVec = tr.getVec<TLorentzVector>("jetsLVec");
@@ -130,10 +168,9 @@ int main(int argc, char* argv[]) {
     double ht=tr.getVar<double>("ht");
     vector<int> W_tau_prongsVec = tr.getVec<int>("W_tau_prongsVec");
 
+
     //Prediction part
     //Control sample
-
-    if( nMuons == 1 && nElectrons == 0 ) {
 
       // The kinematic properties of the well-reconstructed, isolated muon                                                                    
       vector<TLorentzVector>isomuonsLVec;
@@ -149,21 +186,22 @@ int main(int argc, char* argv[]) {
 	  isomuonsLVec.push_back(isomu);
 	}                                                                                                                                  
       }
+
+    if( nMuons == 1 && nElectrons == 0 ) {
+
 	  const double muPt = isomuonsLVec.at(0).Pt();
 	  const double muEta = isomuonsLVec.at(0).Eta();
 	  const double muPhi = isomuonsLVec.at(0).Phi();
 	  const double muM = isomuonsLVec.at(0).M();
-
-      // Use only events where the muon is inside acceptance                                                                                  
-      if( muPt < TauResponse::ptMin() ) continue;                                                                                                             
-      if( fabs(muEta) > TauResponse::etaMax() ) continue;
-
+	  // Use only events where the muon is inside acceptance                                                                             
+	  if( muPt < TauResponse::ptMin() ) continue;
+	  if( fabs(muEta) > TauResponse::etaMax() ) continue;
       // "Cross cleaning": find the jet that corresponds to                                                                                  
       // the muon. Associate the jet that is closestin eta-phi space to the lepton                                                           
 
-      vector<double> jetseta, jetsphi;
-      jetseta.clear();
-      jetsphi.clear();
+	  vector<double> jetseta, jetsphi;
+	  jetseta.clear();
+	  jetsphi.clear();
 
       for(unsigned ij=0; ij<jetsLVec.size(); ij++){
 	double eta1 = jetsLVec.at(ij).Eta();
@@ -177,7 +215,6 @@ int main(int argc, char* argv[]) {
       const float deltaRMax = 0.2;
       const unsigned nObj = jetsLVec.size();
       if( !utils::findMatchedObject(muJetIdx,muEta,muPhi,jetseta,jetsphi,nObj,deltaRMax) ) continue;
-      //utils::findMatchedObject(muJetIdx,muEta,muPhi,jetseta,jetsphi,nObj,deltaRMax);                                                        
       // Calculate RA2 selection-variables from "cleaned" jets                                                                                
       vector<TLorentzVector> selNJetVec;
       selNJetVec.clear();
@@ -210,16 +247,15 @@ int main(int argc, char* argv[]) {
           selMhtY -= jetsLVec.at(jetIdx).Pt()*sin(jetsLVec.at(jetIdx).Phi());
 	}
 
-
       }
+
       //calculate met
       selmetX = met*cos(metphi)+ muPt*cos(muPhi);
       selmetY = met*sin(metphi)+ muPt*sin(muPhi);
 
       int selNJet = AnaFunctions::countJets(selNJetVec, AnaConsts::pt30Eta24Arr);
-
-      if( selNJet < 3 ) continue;
-
+       //      if( selNJet < 3 ) continue;
+       if( selNJetVec.size() < 3 ) continue;
       // Get random number from tau-response template                                                                                         
       // The template is chosen according to the muon pt                                                                                      
       const double scale = tauResp.getRandom(muPt);
@@ -237,13 +273,13 @@ int main(int argc, char* argv[]) {
       double simMhtY = selMhtY;
       double simmetX = selmetX;
       double simmetY = selmetY;
-
-      // If simulted tau-jet meets same criteria as as HT jets,                                                                               
       // recompute NJets                                                                                                               
       TLorentzVector simLVec; simLVec.SetPtEtaPhiM(simTauJetPt, simTauJetEta, simTauJetPhi, muM);
       simNJetVec.push_back(simLVec);
 
-      // recompute HT and MHT                                                                                                                        
+      // If simulted tau-jet meets same criteria as as HT jets,                                                                               
+      // recompute HT and MH
+     
       if( simTauJetPt > htJetPtMin() && fabs(muEta) < htJetEtaMax()) {
         simHt += simTauJetPt;
       }
@@ -262,14 +298,12 @@ int main(int argc, char* argv[]) {
       const double simmet = sqrt( simmetX*simmetX + simmetY*simmetY );
       const double simmetPhi = std::atan2(simmetY,simmetX);
 
-      int simmuJet = AnaFunctions::countJets(simNJetVec, AnaConsts::pt30Eta24Arr);
-      int simNJet = selNJet+simmuJet;
-
       //recompute jetVec
 
       vector<TLorentzVector> combNJetVec;
       combNJetVec.clear();
       combNJetVec = combjet(selNJetVec, simNJetVec);
+      int combNJet = AnaFunctions::countJets(combNJetVec, AnaConsts::pt30Eta24Arr);
 
       //recompute deltaphi
 
@@ -287,14 +321,45 @@ int main(int argc, char* argv[]) {
 	if( !( (AnaConsts::low_nJetsSelBtagged == -1 || cnt1CSVS >= AnaConsts::low_nJetsSelBtagged) && (AnaConsts::high_nJetsSelBtagged == -1 || cnt1CSVS < AnaConsts::high_nJetsSelBtagged ) ) ){
 	  passbJets = false;
 	}
+	
+	//top tagger input
+	TLorentzVector metLVec_pre; metLVec_pre.SetPtEtaPhiM(simmet, 0, simmetPhi, 0);
+        int comb30_pre = AnaFunctions::countJets(combNJetVec, AnaConsts::pt30Arr);
+	std::vector<TLorentzVector> *jetsLVec_forTagger_pre = new std::vector<TLorentzVector>(); std::vector<double> *recoJetsBtag_forTagger_pre = new std::vector<double>();
+	AnaFunctions::prepareJetsForTagger(combNJetVec, tr.getVec<double>("recoJetsBtag_0"), (*jetsLVec_forTagger_pre), (*recoJetsBtag_forTagger_pre));
+
+	int bestTopJetIdx_pre = -1;
+	bool remainPassCSVS_pre = false;
+	int pickedRemainingCombfatJetIdx_pre = -1;
+	double bestTopJetMass_pre = -1;
+
 
       //Apply baseline cut
 
-	if(simNJet<AnaConsts::nJetsSelPt30Eta24) continue;
-	if(simmet<AnaConsts::defaultMETcut) continue;
+	if(combNJet<AnaConsts::nJetsSelPt30Eta24) continue;
+      	if(simmet<AnaConsts::defaultMETcut) continue;
 	if(!passdeltaPhi) continue;
 	if(!passbJets) continue;
+       /*	//Apply Top tagger
+	if(comb30_pre >= AnaConsts::nJetsSel ){
+	  type3Ptr->processEvent((*jetsLVec_forTagger_pre), (*recoJetsBtag_forTagger_pre), metLVec_pre);
+	  bestTopJetIdx_pre = type3Ptr->bestTopJetIdx;
+	  remainPassCSVS_pre = type3Ptr->remainPassCSVS;
+	  pickedRemainingCombfatJetIdx_pre = type3Ptr->pickedRemainingCombfatJetIdx;
+	  if( bestTopJetIdx_pre != -1 ) bestTopJetMass_pre = type3Ptr->bestTopJetLVec.M();
+	}
 
+	
+
+		bool passTopTagger = true;
+	//bestTopJetIdx_pre != -1 means at least 1 top candidate!
+	if( bestTopJetIdx_pre == -1 ){passTopTagger = false; }
+	if( ! remainPassCSVS_pre ){passTopTagger = false; }
+	if( pickedRemainingCombfatJetIdx_pre == -1 && jetsLVec_forTagger_pre->size()>=6 ){passTopTagger = false; }
+	if( ! (bestTopJetMass_pre > AnaConsts::lowTopCut_ && bestTopJetMass_pre < AnaConsts::highTopCut_ ) ){ passTopTagger = false; }
+
+	if(!passTopTagger) continue;
+	*/
       //correction factor:
       const double corrBRWToTauHad = 0.65;  // Correction for the BR of hadronic tau decays                          
       const double corrBRTauToMu = Efficiency::taumucor(Efficiency::Ptbin1(muPt));//correction from tauonic mu contamination
@@ -305,31 +370,34 @@ int main(int argc, char* argv[]) {
       //The overall correction factor                                                                                                          
       const double corr = corrBRTauToMu * corrBRWToTauHad * corrMuAcc * corrMuRecoEff * corrMuIsoEff;
 
-      // Fill the prediction                                                                                                                   
+      // Fill the prediction
       myBaseHistgram.hPredHt->Fill(simHt,corr);
       myBaseHistgram.hPredmet->Fill(simmet,corr);
-      myBaseHistgram.hPredNJets->Fill(simNJet,corr);
+      myBaseHistgram.hPredNJets->Fill(combNJet,corr);
 
-
-    }
+    }//control sample loop
 
       //Expectation part 
       // Select only events where the W decayed into a hadronically decaying tau
+
     bool passBaseline = tr.getVar<bool>("passBaseline");
     bool passLeptVeto = tr.getVar<bool>("passLeptVeto");
     bool passnJets = tr.getVar<bool>("passnJets");
     bool passMET = tr.getVar<bool>("passMET");
     bool passdPhis = tr.getVar<bool>("passdPhis");
     bool passBJets = tr.getVar<bool>("passBJets");
+    bool passTagger = tr.getVar<bool>("passTagger");
 
     int nJets = tr.getVar<int>("cntNJetsPt30Eta24");
 
     if(W_tau_prongsVec.size()==0)continue;
+
     if(!passLeptVeto)continue;
     if(!passnJets)continue;
     if(!passMET)continue;
     if(!passdPhis)continue;
     if(!passBJets)continue;
+    if(!passTagger) continue;
 
     myBaseHistgram.hTrueHt->Fill(ht);
     myBaseHistgram.hTruemet->Fill(met);
@@ -337,6 +405,7 @@ int main(int argc, char* argv[]) {
   }
   // --- Save the Histograms to File -----------------------------------
   (myBaseHistgram.oFile)->Write();
+
   return 0;
 }
 
@@ -364,5 +433,10 @@ vector<TLorentzVector> combjet (const vector<TLorentzVector> &seljet, const vect
 	combNJet.push_back(comb);
       }
     }
+  if(combNJet.size()==seljet.size()){
+    TLorentzVector comb;
+    comb.SetPtEtaPhiM(simjet.at(0).Pt(), simjet.at(0).Eta(), simjet.at(0).Phi(), simjet.at(0).M());
+    combNJet.push_back(comb);
+  }
       return combNJet;
 }
